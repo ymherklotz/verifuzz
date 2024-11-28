@@ -13,7 +13,8 @@ module Verismith.Verilog2005
     NumberProbability,
     CategoricalProbability,
     Verilog2005 (..),
-    PrintingOpts (..)
+    PrintingOpts (..),
+    resolveInsts
   )
 where
 
@@ -22,3 +23,4 @@ import Verismith.Verilog2005.AST
 import Verismith.Verilog2005.Generator
 import Verismith.Verilog2005.Parser
 import Verismith.Verilog2005.PrettyPrinter
+import Verismith.Verilog2005.Utils

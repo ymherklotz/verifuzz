@@ -415,6 +415,7 @@ data GarbageModuleOpts = GarbageModuleOpts
     _gmoOptionalPort :: !Double,
     _gmoItems :: !NumberProbability,
     _gmoItem :: !CategoricalProbability,
+    _gmoMacro :: !Double,
     _gmoTimeScale :: !Double,
     _gmoTimeMagnitude :: !CategoricalProbability,
     _gmoCell :: !Double,
@@ -615,6 +616,7 @@ defGarbageOpts =
           _gmoOptionalPort = 0.5,
           _gmoItems = NPPoisson 0 3,
           _gmoItem = CPDiscrete [6, 2, 2, 3, 2, 1, 1, 1],
+          _gmoMacro = 0.5,
           _gmoTimeScale = 0.5,
           _gmoTimeMagnitude = uniformCP,
           _gmoCell = 0.5,
@@ -1156,6 +1158,7 @@ garbageModuleCodec =
     <*> dfield _gmoOptionalPort "port_optional"
     <*> tfield _gmoItems "items" numProbCodec
     <*> tfield _gmoItem "item" catProbCodec
+    <*> dfield _gmoMacro "macromodule"
     <*> dfield _gmoTimeScale "timescale_optional"
     <*> tfield _gmoTimeMagnitude "timescale_magnitude" catProbCodec
     <*> dfield _gmoCell "cell"

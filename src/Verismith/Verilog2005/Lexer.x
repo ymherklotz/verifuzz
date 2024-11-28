@@ -25,9 +25,11 @@ import Numeric.Natural
 import GHC.Natural
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (mapMaybe)
+import Data.Bifunctor (second)
 import Text.Printf (printf)
 import Control.Monad.State.Strict
 import Control.Monad.Except
+import Control.Monad
 import Control.Exception
 import qualified Data.ByteString as SBS
 import qualified Data.ByteString.Lazy as LBS
@@ -281,7 +283,7 @@ to :: (SBS.ByteString -> Token) -> AlexAction
 to f p = mkPos p . f
 
 toa :: (SBS.ByteString -> Alex Token) -> AlexAction
-toa f p s = f s >>= mkPos p
+toa f p = f >=> mkPos p
 
 sc :: Int -> Alex ()
 sc n = modify' $ \s -> s { _asStartCode = n }
@@ -384,18 +386,16 @@ tableEdge s =
 cdcident :: AlexAction
 cdcident p s = case HashMap.lookup (SBS.tail s) cdMap of
   Just a -> a p
-  Nothing -> do
-    defs <- gets _asDefines
-    case HashMap.lookup s defs of
-      Nothing ->
-        alexError p $
-          printf "Compiler directive %s not declared nor supported, preprocess input file" $
-            show s
-      Just i ->
-        alexError p $
-          printf
-            "User defined compiler directive replacement in not implemented, %s was encountered"
-            (show s)
+  Nothing -> gets _asDefines >>= \defs -> case HashMap.lookup s defs of
+    Nothing ->
+      alexError p $
+        printf "Compiler directive %s not declared nor supported, preprocess input file" $
+          show s
+    Just i ->
+      alexError p $
+        printf
+          "User defined compiler directive replacement in not implemented, %s was encountered"
+          (show s)
 
 kwident :: SBS.ByteString -> Alex Token
 kwident s = case SBS.stripPrefix "PATHPULSE$" s of
@@ -443,11 +443,11 @@ cdMap = HashMap.fromList $
   : ("undefineall", \_ -> modify' (\s -> s { _asDefines = HashMap.empty }) >> scan)
   : ("__LINE__", \p -> mkPos p $ LitString $ packChars $ show $ _posLine p)
   : ("__FILE__", \p -> mkPos p $ LitString $ makeString $ show $ _posSource p)
-  : map (\(x, y) -> (x, \p -> y >>= mkPos p))
-    ( ("timescale", sc ts0 >> return CDTimescale)
-      : ("resetall", modify' (\s -> s { _asDefines = HashMap.empty }) >> return CDResetall)
-      -- , ("pragma", >> return CDPragma) -- TODO: Another layer of hell
-      : map (\(x, y) -> (x, return y))
+  : map (second (\y p -> y >>= mkPos p))
+    ( ("timescale", sc ts0 *> pure CDTimescale)
+      : ("resetall", modify' (\s -> s { _asDefines = HashMap.empty }) *> pure CDResetall)
+      -- , ("pragma", *> pure CDPragma) -- TODO: Another layer of hell
+      : map (second pure)
         [ ("celldefine", CDCelldefine)
         , ("default_nettype", CDDefaultnettype)
         -- , ("default_decay_time", CDUnknown)
@@ -485,7 +485,7 @@ linecompdir _ = do
   l <- scan
   f <- scan
   c <- scan
-  case l >>= \ll -> f >>= \ff -> c >>= \cc -> pure (ll, ff, cc) of
+  case (,,) <$> l <*> f <*> c of
     Nothing -> return Nothing
     Just (PosToken _ (LitDecimal l), PosToken _ (LitString s), PosToken _ (LitDecimal n))
       | n < 3 -> do
@@ -568,7 +568,7 @@ kwV1995 =
     ("default", pure KWDefault),
     ("defparam", pure KWDefparam),
     ("disable", pure KWDisable),
-    ("edge", sc edge >> pure KWEdge),
+    ("edge", sc edge *> pure KWEdge),
     ("else", pure KWElse),
     ("end", pure KWEnd),
     ("endcase", pure KWEndcase),
@@ -576,7 +576,7 @@ kwV1995 =
     ("endmodule", pure KWEndmodule),
     ("endprimitive", pure KWEndprimitive),
     ("endspecify", pure KWEndspecify),
-    ("endtable", sc 0 >> pure KWEndtable),
+    ("endtable", sc 0 *> pure KWEndtable),
     ("endtask", pure KWEndtask),
     ("event", pure KWEvent),
     ("for", pure KWFor),
@@ -633,7 +633,7 @@ kwV1995 =
     ("strong1", pure KWStrong1),
     ("supply0", pure KWSupply0),
     ("supply1", pure KWSupply1),
-    ("table", sc table >> pure KWTable),
+    ("table", sc table *> pure KWTable),
     ("task", pure KWTask),
     ("time", pure KWTime),
     ("tran", pure KWTran),

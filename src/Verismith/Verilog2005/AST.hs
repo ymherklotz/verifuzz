@@ -1,5 +1,5 @@
 -- Module      : Verismith.Verilog2005.AST
--- Description : Partial Verilog 2005 AST.
+-- Description : Verilog 2005 AST.
 -- Copyright   : (c) 2023 Quentin Corradi
 -- License     : GPL-3
 -- Maintainer  : q [dot] corradi22 [at] imperial [dot] ac [dot] uk
@@ -189,6 +189,13 @@ data Identified t = Identified {_identIdent :: !Identifier, _identData :: !t}
 
 instance Functor Identified where
   fmap f (Identified i x) = Identified i $ f x
+
+instance Foldable Identified where
+  foldr f acc (Identified i x) = f x acc
+
+instance Traversable Identified where
+  traverse f (Identified i x) = Identified i <$> f x
+  sequenceA (Identified i x) = Identified i <$> x
 
 showHelper :: (Int -> a -> ShowS) -> Identified a -> ShowS
 showHelper fp (Identified i x) = showString "Identified " . shows i . showChar ' ' . fp 0 x
@@ -420,7 +427,6 @@ data NumIdent
   | NINumber !Natural
   deriving (Show, Eq, Data, Generic)
 
--- TODO? Base and 1 can be expressed as 3, not 2 though, option delay means delay 0
 -- | Delay3
 data Delay3
   = D3Base !NumIdent
@@ -650,7 +656,7 @@ data FunctionStatement
   | FSBlock
       { _fsbHeader :: !(Maybe (Identifier, [AttrIded StdBlockDecl])),
         _fsbPar_seq :: !Bool,
-        _fsbStmt :: ![AttrFStmt]
+        _fsbBody :: ![AttrFStmt]
       }
   deriving (Show, Eq, Data, Generic)
 
@@ -696,7 +702,7 @@ data Statement
   | SBlock
       { _sbHeader :: !(Maybe (Identifier, [AttrIded StdBlockDecl])),
         _sbPar_seq :: !Bool,
-        _sbStmt :: ![AttrStmt]
+        _sbBody :: ![AttrStmt]
       }
   | SSysTaskEnable
       { _ssteIdent :: !ByteString,
@@ -1189,9 +1195,9 @@ data ModuleItem
 type GenerateBlock = Identified [Attributed ModGenBlockedItem]
 
 -- | Module block
--- TODO: remember whether the module is a module or macromodule because implementation dependent
 data ModuleBlock = ModuleBlock
   { _mbAttr :: !Attributes,
+    _mbMacro :: !Bool,
     _mbIdent :: !Identifier,
     _mbPortInter :: ![Identified [Identified (Maybe CRangeExpr)]],
     _mbBody :: ![ModuleItem],

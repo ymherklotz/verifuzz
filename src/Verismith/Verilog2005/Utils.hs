@@ -33,16 +33,21 @@ module Verismith.Verilog2005.Utils
     fromMGBlockedItem1,
     fromMGBlockedItem_add,
     fromMGBlockedItem,
+    resolveInsts
   )
 where
 
+import Control.Lens ((%~))
+import Data.Data.Lens (biplate)
 import Numeric.Natural
 import Text.Printf (printf)
 import Data.Functor.Compose
 import Data.Functor.Identity
+import Data.Function (on, (&))
 import qualified Data.ByteString as BS
 import Data.ByteString.Internal (c2w, packChars)
 import qualified Data.HashSet as HS
+import qualified Data.HashMap.Strict as HashMap
 import Data.List.NonEmpty (NonEmpty (..), (<|), toList)
 import qualified Data.List.NonEmpty as NE
 import Verismith.Verilog2005.Lexer (VerilogVersion (..), isIdentSimple)
@@ -450,3 +455,45 @@ fromMGBlockedItem_add x y = case (x, y) of
 fromMGBlockedItem :: [Attributed ModGenBlockedItem] -> [Attributed ModGenSingleItem]
 fromMGBlockedItem =
   nonEmpty [] $ toList . regroup (fmap fromMGBlockedItem1) (addAttributed fromMGBlockedItem_add)
+
+-- | Resolves Module and Primitive instantiation if possible
+-- | Also checks there are no duplicate toplevel elements
+resolveInsts :: Verilog2005 -> Either String Verilog2005
+resolveInsts v = do
+  nm <-
+    foldr
+      ( \m h ->
+          h >>=
+            let Identifier k = _mbIdent m
+             in HashMap.alterF (maybe (Right $ Just True) $ const $ Left $ duperr k) k
+      )
+      (Right HashMap.empty)
+      (_vModule v)
+  nm <-
+    foldr
+      (\p h ->
+          h >>=
+            let Identifier k = _pbIdent p
+             in HashMap.alterF (maybe (Right $ Just False) $ const $ Left $ duperr k) k
+      )
+      (Right nm)
+      (_vPrimitive v)
+  return $ v & biplate %~ \mgi -> case mgi of
+    MGIUnknownInst k@(Identifier i) param (Identity (UknInst n lv args)) ->
+      case HashMap.lookup i nm of
+        Nothing -> mgi
+        Just False ->
+          MGIUDPInst k dsDefault (either (D21 . MTMSingle) (uncurry $ on D22 MTMSingle) <$> param) $
+            Identity $ UDPInst (Just n) lv args
+        Just True ->
+          MGIModInst
+            k
+            ( ParamPositional $
+                case param of Nothing -> []; Just (Right (e0, e1)) -> [e0, e1]; Just (Left e) -> [e]
+            )
+            ( Identity $
+                ModInst n $
+                  PortPositional $ map (Attributed [] . Just) $ netlv2expr lv : NE.toList args
+            )
+    _ -> mgi
+  where duperr = printf "module or primitive %s defined more than once" . show

@@ -321,9 +321,9 @@ prettyGExpr ppid ppr ppa l e = case e of
     ll <- (<=> viaShow op) <$> psexpr p el
     da <- ppa a
     case compare l p of
-      LT -> padj pp r >>= \rr -> mkid $ ng $ par $ ll <+> (da <?=> rr)
-      EQ -> first (\rr -> ll <+> (da <?=> rr)) <$> pp r
-      GT -> first (\rr -> ng $ ll <+> (da <?=> rr)) <$> pp r
+      LT -> padj pp r >>= mkid . ng . par . (ll <+>) . (da <?=>)
+      EQ -> first ((ll <+>) . (da <?=>)) <$> pp r
+      GT -> first (ng . (ll <+>) . (da <?=>)) <$> pp r
   ExprCond ec a et ef -> do
     dc <- psexpr 11 ec
     dt <- psexpr 12 et
@@ -472,9 +472,7 @@ prettyEdgeDesc x = do
     else
       if x == V.fromList [False, False, True, True, True, False]
         then pure "negedge"
-        else
-          (\x -> group $ "edge" <=> brk x)
-            <$> csl mempty mempty (pure . raw) (V.ifoldr (pED zx) [] x)
+        else group . ("edge" <=>) . brk <$> csl mempty mempty (pure . raw) (V.ifoldr (pED zx) [] x)
   where
     pED zx i b =
       if b
@@ -995,7 +993,7 @@ prettyPathDecl p pol eds = do
     po = maybe mempty (\p -> if p then "+" else "-") pol
     -- edge sensitive path polarity isn't at the same place as non edge sensitive
     noedge = eds == Nothing
-    fne = if noedge then uncurry (<>) else \x -> fst x <> newline
+    fne = if noedge then uncurry (<>) else (<> newline) . fst
 
 prettySpecifyItem :: SpecifySingleItem -> Print
 prettySpecifyItem x =
@@ -1165,8 +1163,8 @@ prettyPortInter =
       _ -> cslid (lbrace <> softspace) rbrace pst l >>= mkid
 
 prettyModuleBlock :: LocalCompDir -> ModuleBlock -> Reader PrintingOpts (Doc, LocalCompDir)
-prettyModuleBlock (LocalCompDir ts c p dn) (ModuleBlock a i pi b mts mc mp mdn) = do
-  head <- fpadj (group . ("module" <=>)) prettyIdent i
+prettyModuleBlock (LocalCompDir ts c p dn) (ModuleBlock a mm i pi b mts mc mp mdn) = do
+  head <- fpadj (group . ((if mm then "macromodule" else "module") <=>)) prettyIdent i
   ports <- prettyPortInter pi
   header <- prettyItem a $ head <> gpar ports
   body <- prettyModuleItems b

@@ -12,7 +12,7 @@ module Verismith.Verilog2005.Parser
   )
 where
 
-import Control.Applicative (liftA2)
+import Control.Applicative (liftA2, (<**>))
 import Control.Lens hiding ((<|))
 import Data.Functor.Compose
 import Control.Monad (join)
@@ -74,7 +74,7 @@ type LAPBranch a = [APBranch a]
 -- | An error that is not merged with other errors and expected tokens
 hardfail :: String -> Parser a
 hardfail m =
-  mkPT $ \s -> return $ Consumed $ return $ Error $ newErrorMessage (Message m) (statePos s)
+  mkPT $ pure . Consumed . pure . Error . newErrorMessage (Message m) . statePos
 
 -- | Warning formatting
 warn :: SourcePos -> String -> Parser ()
@@ -98,6 +98,10 @@ nextPos pos _ ptl = case ptl of
   PosToken (Position l c (PSFile f) :| _) _ : _ -> newPos f (fromEnum l) (fromEnum c)
   PosToken (Position l c (PSLine f _) :| _) _ : _ -> newPos f (fromEnum l) (fromEnum c)
   [] -> pos
+
+-- | Pass an argument before joining
+joinWith :: Monad m => m (a -> m b) -> a -> m b
+joinWith mf x = mf >>= \f -> f x
 
 -- | Parse exactly one token and produce a value
 producePrim :: (Token -> Maybe a) -> Parser a
@@ -123,7 +127,7 @@ fproduce f = producePrim f <* anywherecompdir
 lproduce :: LProduce a -> Parser a
 lproduce l =
   fproduce (\t -> IntMap.lookup (getConsIndex t) $ mkActionMap l)
-    `labels` map (\(d, _) -> show d) l
+    `labels` map (show . fst) l
 
 -- | Maps a function on the data given by branching on a Token without data
 maplproduce :: (a -> b) -> LProduce a -> LProduce b
@@ -155,7 +159,7 @@ lbranch = join . lproduce
 
 -- | Parse attributes then branches on the next token using a LABranch
 labranch :: LABranch a -> Parser a
-labranch l = attributes >>= \a -> lproduce l >>= \p -> p a
+labranch l = join $ attributes <**> lproduce l
 
 -- | Maps a function on the data given by a branching with attributes
 maplbranch :: (a -> b) -> LBranch a -> LBranch b
@@ -225,21 +229,17 @@ wempty s p = do
 
 -- | Comma separated list potentially ended by a comma to be lenient
 xcsl :: String -> Parser a -> Parser [a]
-xcsl s p = do
-  x <- optionMaybe p
-  case x of
-    Nothing -> pure []
-    Just h -> do
-      pos <- getPosition
-      b <- optConsume SymComma
-      if b
-        then do
-          t <- xcsl s p
-          if null t
-            then warn pos (printf "Extraneous comma at the end of %s is not correct Verilog" s)
-            else pure ()
-          return $ h : t
-        else return [h]
+xcsl s p = (optionMaybe p >>=) $ maybe (pure []) $ \h -> do
+  pos <- getPosition
+  b <- optConsume SymComma
+  if b
+    then do
+      t <- xcsl s p
+      if null t
+        then warn pos (printf "Extraneous comma at the end of %s is not correct Verilog" s)
+        else pure ()
+      return $ h : t
+    else return [h]
 
 -- | Comma separated list potentially ended by a comma to be lenient
 xcsl1 :: String -> Parser a -> Parser (NonEmpty a)
@@ -259,20 +259,18 @@ wxcsl m = wempty m . xcsl m
 
 -- | Safe parsing comma separated list with at least 1 elements
 scsl1 :: Bool -> Parser a -> (a -> Parser b) -> Parser (NonEmpty b)
-scsl1 safety d p = do
-  h <- d >>= p
-  t <- many $ ((if safety then try else id) $ consume SymComma *> d) >>= p
-  return $ h :| t
+scsl1 safety d p =
+  liftA2 (:|) (d >>= p) $ many $ ((if safety then try else id) $ consume SymComma *> d) >>= p
 
 -- | Safe parsing of several elements of type B then of type C
 -- | when B and C start with a common part of type A
 smanythen :: Parser a -> (a -> Parser b) -> (a -> Parser c) -> Parser ([b], [c])
-smanythen pa pb pc = do
-  h <- optionMaybe $ pa >>= \a -> Left <$> pb a <|> Right <$> pc a
-  case h of
-    Nothing -> return ([], [])
-    Just (Left hb) -> first (hb :) <$> smanythen pa pb pc
-    Just (Right hc) -> (,) [] . (hc :) <$> many (pa >>= pc)
+smanythen pa pb pc =
+  (optionMaybe (pa >>= \a -> Left <$> pb a <|> Right <$> pc a) >>=) $
+    maybe (pure ([], [])) $
+      either
+        (\hb -> first (hb :) <$> smanythen pa pb pc)
+        (\hc -> (,) [] . (hc :) <$> many (pa >>= pc))
 
 -- | Parenthesised comma separated list
 pcsl :: Parser a -> Parser [a]
@@ -773,7 +771,7 @@ stmtBlock kind pos = do
   ms <- optionMaybe $ consume SymColon *> ident
   (decl, body) <- smanythen
     attributes
-    (\a -> lproduce stdBlockDecl >>= \p -> NE.toList <$> p a)
+    (fmap NE.toList . joinWith (lproduce stdBlockDecl))
     (\a -> Attributed a <$> statement)
   let d = concat decl
   h <- case (d, ms) of
@@ -932,9 +930,9 @@ taskFun zeroarg arglb = do
     parens $ ww "function ports" $ concat <$> csl (NE.toList <$> labranch (arglb True))
   consume SymSemi
   let dp = case l of
-        Nothing -> maplaproduce (\p -> p <* consume SymSemi) (arglb False) ++ sbd
+        Nothing -> maplaproduce (<* consume SymSemi) (arglb False) ++ sbd
         Just _ -> sbd
-  (d, b) <- smanythen attributes (\a -> lproduce dp >>= \p -> NE.toList <$> p a) trOptStmt
+  (d, b) <- smanythen attributes (fmap NE.toList . joinWith (lproduce dp)) trOptStmt
   ww "function declarations" $ pure d
   case b of
     [x] -> pure ()
@@ -1213,8 +1211,8 @@ modudpinstance what = do
   args <- parens $ do
     a <- attributes
     do {
-        x <- namePort a;
-        PortNamed . (x :) <$> commathen (xcsl "port connections" $ attributes >>= namePort)
+      x <- namePort a;
+      PortNamed . (x :) <$> commathen (xcsl "port connections" $ attributes >>= namePort)
     }
       <|> (ordPort a >>= \x -> PortPositional . (x :) <$> commathen (csl $ attributes >>= ordPort))
   let argl = case args of
@@ -1318,7 +1316,7 @@ genSingle ::  Parser [Attributed ModGenBlockedItem]
 genSingle = do
   a <- attributes
   pos <- getPosition
-  b <- (lproduce comModGenItem >>= \p -> p pos) <|> modudpInst
+  b <- joinWith (lproduce comModGenItem) pos <|> modudpInst
   return $ Attributed a <$> toList (toMGBlockedItem b)
 
 genCondBlock :: Parser GenerateCondBlock
@@ -1647,8 +1645,8 @@ npmodItem =
   ]
 
 -- | Module
-parseModule :: LocalCompDir -> Attributes -> Parser Verilog2005
-parseModule (LocalCompDir ts cl pull dnt) a = do
+parseModule :: Bool -> LocalCompDir -> Attributes -> Parser Verilog2005
+parseModule b (LocalCompDir ts cl pull dnt) a = do
   s <- lenientIdent
   params <- option [] $ do
     consume SymPound
@@ -1661,7 +1659,7 @@ parseModule (LocalCompDir ts cl pull dnt) a = do
     Nothing ->
       many $ parseItem MIMGI $ maplaproduce (const . fmap fst) (portDecl dnt False) ++ npmodItem
     Just pd -> (pd :) <$> many (parseItem MIMGI npmodItem)
-  return mempty {_vModule = [ModuleBlock a s pi (concat mi) ts cl pull dnt]}
+  return mempty {_vModule = [ModuleBlock a b s pi (concat mi) ts cl pull dnt]}
   where
     -- Fully specified port declaration list
     fullPort =
@@ -1869,8 +1867,8 @@ topDecl =
     st <- getState
     fpbranch $ \p t -> case t of
       KWPrimitive -> Just $ udp a <* closeConsume p KWPrimitive KWEndprimitive
-      KWModule -> Just $ parseModule st a <* closeConsume p KWModule KWEndmodule
-      KWMacromodule -> Just $ parseModule st a <* closeConsume p KWMacromodule KWEndmodule
+      KWModule -> Just $ parseModule False st a <* closeConsume p KWModule KWEndmodule
+      KWMacromodule -> Just $ parseModule True st a <* closeConsume p KWMacromodule KWEndmodule
       KWConfig | null a -> Just $ config <* closeConsume p KWConfig KWEndconfig
       _ -> Nothing
 

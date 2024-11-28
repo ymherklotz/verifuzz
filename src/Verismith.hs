@@ -248,7 +248,10 @@ handleOpts (Parse f o s popts) = do
   if null warns || not s
     then pure ()
     else error "Input file does not comply strictly with the Verilog 2005 standard"
-  maybe L.putStr L.writeFile o $ V2.genSource (Just 80) popts ast
+  ast' <- case V2.resolveInsts ast of
+    Left err -> error err
+    Right x -> pure x
+  maybe L.putStr L.writeFile o $ V2.genSource (Just 80) popts ast'
 handleOpts (ShuffleOpt f t o nshuffle nrename noequiv equivdir checker) = do
   datadir <- getDataDir
   verilogSrc <- T.readFile file

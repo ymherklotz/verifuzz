@@ -85,6 +85,7 @@ library
                  , Verismith.Verilog2005.Parser
                  , Verismith.Verilog2005.Randomness
                  , Verismith.Verilog2005.Generator
+                 , Verismith.Verilog2005.Mutation
   build-depends: array >=0.5 && <0.6
                , base >=4.7 && <5
                , binary >= 0.8.5.1 && <0.9

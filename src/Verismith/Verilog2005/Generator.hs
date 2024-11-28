@@ -18,6 +18,7 @@ where
 
 import Control.Applicative (liftA2, liftA3)
 import Data.Functor.Compose
+import Data.Bifunctor (second)
 import Control.Lens hiding ((<.>))
 import Control.Monad (join, replicateM)
 import Control.Monad.Reader
@@ -79,7 +80,7 @@ attenuateNum d p =
           then NPDiscrete [(1, off)]
           else NPPoisson off $ p * d
       NPDiscrete l -> NPDiscrete $ if d == 0 then [NE.head l] else NE.map (uncurry mkdistrfor) l
-      NPLinearComb l -> NPLinearComb $ NE.map (\(p, np) -> (p, attenuateNum d np)) l
+      NPLinearComb l -> NPLinearComb $ NE.map (second $ attenuateNum d) l
   where
     mkdistrfor bw n = (bw * d ** fromIntegral n, n)
 
@@ -936,6 +937,7 @@ garbageModuleBlock ts = do
           garbageIdentified $ sampleMaybe (m _gmoPortRange) garbageCRangeExpr
     else (\i -> Identified i [Identified i Nothing]) <$> garbageIdent
   ModuleBlock <$> garbageAttributes
+    <*> sampleBernoulli (m _gmoMacro)
     <*> garbageIdent
     <*> pure header
     <*> sampleN
